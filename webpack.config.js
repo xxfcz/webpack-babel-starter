@@ -9,6 +9,7 @@ const webpack = require('webpack')
 const ExtractTextPlugin = require('extract-text-webpack-plugin')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const myLocalIp = require('my-local-ip')
+const AppCachePlugin = require('appcache-webpack-plugin')
 const common = require('./common')
 const plugins = []
 
@@ -52,6 +53,9 @@ const ASSETS_LIMIT =
 const hash =
   (NODE_ENV === 'production' && DEVTOOLS ? '-devtools' : '') +
   (NODE_ENV === 'production' ? '-[hash]' : '')
+const APPCACHE = process.env.APPCACHE
+  ? JSON.parse(process.env.APPCACHE)
+  : !MODE_DEV_SERVER // if false, nothing will be cached by AppCache
 
 /** integrity checks */
 
@@ -81,16 +85,93 @@ if (!FAIL_ON_ERROR) {
   plugins.push(new webpack.NoEmitOnErrorsPlugin())
 }
 
+/**
+ * AppCache setup - generates a manifest.appcache file based on config
+ * that will be referenced in the iframe-inject-appcache-manifest.html file
+ * which will itself be in an iframe tag in the index.html file
+ *
+ * Reason: So that index.html wont be cached
+ * (if it were the one referencing manifest.appcache, it would be cached, and we couldn't manage FALLBACK correctly)
+ * TLDR: AppCache sucks, but it's the only offline cross-browser "API"
+ */
+const appCacheConfig = {
+  network: ['*'],
+  settings: ['prefer-online'],
+  output: 'manifest.appcache'
+}
+if (APPCACHE) {
+  // regular appcache manifest
+  plugins.push(
+    new AppCachePlugin(
+      Object.assign({}, appCacheConfig, {
+        exclude: [
+          /.*\.map$/,
+          /^main(.*)\.js$/ // this is the js file emitted from webpack for main.css (since it's used in plain css, no need for it)
+        ],
+        fallback: ['. offline.html']
+      })
+    )
+  )
+} else {
+  // appcache manifest that wont cache anything (to be used in development)
+  plugins.push(
+    new AppCachePlugin(
+      Object.assign({}, appCacheConfig, {
+        exclude: [/.*$/]
+      })
+    )
+  )
+  if (MODE_DEV_SERVER) {
+    log.info(
+      'webpack',
+      `[AppCache] No resources added to cache in development mode`
+    )
+  } else {
+    log.info(
+      'webpack',
+      `[AppCache] Cache resetted - nothing will be cached by AppCache`
+    )
+  }
+}
+
+const htmlPluginConfig = {
+  title: 'Topheman - Webpack Babel Starter Kit',
+  template: 'src/index.ejs', // Load a custom template
+  inject: MODE_DEV_SERVER, // inject scripts in dev-server mode - in build mode, use the template tags
+  MODE_DEV_SERVER: MODE_DEV_SERVER,
+  DEVTOOLS: DEVTOOLS,
+  BANNER_HTML: BANNER_HTML
+}
+
+// generate iframe-inject-appcache-manifest.html - injected via iframe in index.html
+// (so that it won't be cached by appcache - otherwise, referencing manifest directly would automatically cache it)
 plugins.push(
-  new HtmlWebpackPlugin({
-    title: 'Topheman - Webpack Babel Starter Kit',
-    template: 'src/index.ejs', // Load a custom template
-    inject: MODE_DEV_SERVER, // inject scripts in dev-server mode - in build mode, use the template tags
-    MODE_DEV_SERVER: MODE_DEV_SERVER,
-    DEVTOOLS: DEVTOOLS,
-    BANNER_HTML: BANNER_HTML
-  })
+  new HtmlWebpackPlugin(
+    Object.assign({}, htmlPluginConfig, {
+      template: 'src/iframe-inject-appcache-manifest.ejs',
+      filename: 'iframe-inject-appcache-manifest.html'
+    })
+  )
 )
+
+// generate index.html
+plugins.push(
+  new HtmlWebpackPlugin(
+    Object.assign({}, htmlPluginConfig, {
+      MODE: 'online'
+    })
+  )
+)
+// generate offline.html
+plugins.push(
+  new HtmlWebpackPlugin(
+    Object.assign({}, htmlPluginConfig, {
+      MODE: 'offline',
+      filename: 'offline.html'
+    })
+  )
+)
+
 // extract css into one main.css file
 const extractSass = new ExtractTextPlugin({
   filename: `main${hash}.css`,

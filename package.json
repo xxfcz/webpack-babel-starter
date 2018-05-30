@@ -43,6 +43,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "appcache-webpack-plugin": "^1.4.0",
     "babel-core": "^6.5.2",
     "babel-eslint": "^7.2.3",
     "babel-loader": "^6.2.3",
